@@ -26,11 +26,17 @@
 
 
 
+int run;
+
 //********** pins for GPIO components: ************//
 
 //uint8_t* MCU_SC_GAIN = LPC_GPIO_PORT->B[0][12];
 //uint8_t* MCU_SC_DC_n = LPC_GPIO_PORT->B[0][13];
 //uint8_t* MCU_SC_DC_p = LPC_GPIO_PORT->B[0][15];
+
+//********** USB read in Buffer *******************//
+
+uint8_t usb_in[8];
 
 //********** Arrays for storing samples ***********//
 
@@ -38,8 +44,8 @@ uint8_t sample_pointer0[16380];
 uint8_t sample_pointer1[16380];
 uint8_t sample_pointer2[16380];
 uint8_t sample_pointer3[16380];
-//uint8_t sample_pointer4[16380];
-//uint8_t sample_pointer5[16380];
+uint8_t sample_pointer4[16380];
+uint8_t sample_pointer5[16380];
 //uint8_t sample_pointer6[16380];
 //uint8_t sample_pointer7[16380];
 
@@ -81,8 +87,8 @@ void setupADC()
 	Chip_USB0_Init();
 	Chip_Clock_SetDivider(CLK_IDIV_A,CLKIN_USBPLL,2); //480 MHz -> 240 MHz
 	Chip_Clock_SetDivider(CLK_IDIV_B,CLKIN_IDIVA,3);  //240 MHz -> 80 MHz
-	Chip_Clock_SetDivider(CLK_IDIV_C,CLKIN_IDIVB,2); //480 MHz -> 240 MHz
-	Chip_Clock_SetBaseClock(CLK_BASE_ADCHS, CLKIN_IDIVC, true, false); /* Source ADHCS base clock from DIV_B */
+//	Chip_Clock_SetDivider(CLK_IDIV_C,CLKIN_IDIVB,2); //80MHz -> 40 MHz
+	Chip_Clock_SetBaseClock(CLK_BASE_ADCHS, CLKIN_IDIVB, true, false); /* Source ADHCS base clock from DIV_B */
 	freqHSADC = Chip_HSADC_GetBaseClockRate(LPC_ADCHS);
 	Chip_Clock_EnableOpts(CLK_MX_ADCHS, true, true, 1);
 	Chip_Clock_Enable(CLK_ADCHS);
@@ -184,15 +190,15 @@ void setupGPDMA()
 	DMA_List[1].DstAddr = (uint32_t) sample_pointer1;
 	DMA_List[2].DstAddr = (uint32_t) sample_pointer2;
 	DMA_List[3].DstAddr = (uint32_t) sample_pointer3;
-//	DMA_List[4].DstAddr = (uint32_t) sample_pointer4;
-//	DMA_List[5].DstAddr = (uint32_t) sample_pointer5;
+	DMA_List[4].DstAddr = (uint32_t) sample_pointer4;
+	DMA_List[5].DstAddr = (uint32_t) sample_pointer5;
 //	DMA_List[6].DstAddr = (uint32_t) sample_pointer6;
 //	DMA_List[7].DstAddr = (uint32_t) sample_pointer7;
 
-	for (int i = 0; i < 4; i++) {
+	for (int i = 0; i < 6; i++) {
 		    DMA_List[i].SrcAddr = (uint32_t) &LPC_ADCHS->FIFO_OUTPUT[0];
-		    DMA_List[i].NextLLI = (uint32_t)(&DMA_List[(i+1) % 8]);
-		    DMA_List[i].Control = (4095 << 0) |      // Transfersize (does not matter when flow control is handled by peripheral)
+		    DMA_List[i].NextLLI = (uint32_t)(&DMA_List[(i+1) % 6]);
+		    DMA_List[i].Control =  (4095 << 0) |     	   // Transfersize (does not matter when flow control is handled by peripheral)
 		                           (0x0 << 12)  |          // Source Burst Size
 		                           (0x0 << 15)  |          // Destination Burst Size
 		                           (0x2 << 18)  |          // Source width // 32 bit width
@@ -232,13 +238,15 @@ void startSampling()
 	//start DMA
 	LPC_GPDMA->CH[DMA_CH].CONFIG = (0x1 << 0); // enable bit, 1 enable, 0 disable
 
-	// wait for DMA transfer to complete
-	while(LPC_GPDMA->INTTCSTAT == 1);
+	for (int i = 0; i < 4095; i++) {
+		// wait for DMA transfer to complete
+		while(LPC_GPDMA->INTTCSTAT == 1) {};
+	}
 
 	Chip_HSADC_FlushFIFO(LPC_ADCHS);
 	uint32_t sts = Chip_HSADC_GetFIFOLevel(LPC_ADCHS);
-	Chip_HSADC_DeInit(LPC_ADCHS); //shut down HSADC
-	Chip_GPDMA_DeInit(LPC_GPDMA); //shut down GPDMA
+//	Chip_HSADC_DeInit(LPC_ADCHS); //shut down HSADC
+//	Chip_GPDMA_DeInit(LPC_GPDMA); //shut down GPDMA
 }
 
 //********** USBD ROM functions **********//
@@ -268,7 +276,7 @@ static void setupHardware()
 	Chip_GPIO_SetPinDIROutput(LPC_GPIO_PORT, 0, 13);
 	Chip_GPIO_SetPinDIROutput(LPC_GPIO_PORT, 0, 15);
 
-	Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, 12, true);
+	Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, 12, false);
 	Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, 13, true);
 	Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, 15, true);
 
@@ -303,6 +311,38 @@ void samplingADC(void)
 	LPC_ADCHS->DSCR_STS = ((0 << 1)
 						| (0 << 0)); //Descriptor table 0
 	LPC_ADCHS->TRIGGER = 1; //SW trigger ADC
+}
+
+void configureDevice(void) {
+	//usb_in[0] = run mode (single = 0, continuous = 1)
+	//usb_in[1] = trigger mode (0 = unconditional, 1 = use trigger)
+	//usb_in[3:2] = trigger configuration settings (bits 11:0 = comparison value, bit 12 = 0 falling, 1 rising)
+	//usb_in[4] = attenuation mode (1x = 0, 10x = 1)
+
+	if (usb_in[4] == 1) {
+		//set attenuation to 1x by using relay 2 to bypass analog gain module
+		Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, 12, true);
+	} else {
+		//set attenuation to 10x
+		Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, 12, false);
+	}
+
+	//usb_in[5] = coupling mode (AC = 0, DC = 1)
+	if (usb_in[5] == 1) {
+		//set analog input coupling mode to DC
+		Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, 13, false);
+		Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, 15, false);
+
+		// Disable DC Biasing
+		Chip_HSADC_SetACDCBias(LPC_ADCHS, 0, HSADC_CHANNEL_NODCBIAS, HSADC_CHANNEL_NODCBIAS);
+	} else {
+		//set analog input coupling mode to AC
+		Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, 13, true);
+		Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, 15, true);
+
+		// Enable DC biasing
+		Chip_HSADC_SetACDCBias(LPC_ADCHS, 0, HSADC_CHANNEL_DCBIAS, HSADC_CHANNEL_DCBIAS);
+	}
 }
 
 //********** Interrupt service Handler Functions **********//
@@ -363,18 +403,37 @@ int main(void)
     // TODO: insert code here
     setupHardware();
     LPC_GPDMA->SYNC = 1;
+    run = 0;
 
-    //add line for usb read request user input prompt run once mode
-	samplingADC();
-	startSampling();
-	//USB send
-	sendSample();
+    while(1) {
+    	if (libusbdev_QueueReadReq(usb_in, 8) != -1) {
+          configureDevice();
+          run = 1;
+    	}
+
+    	if (run == 1) {
+    		//add line for usb read request user input prompt run once mode
+    		samplingADC();
+    		startSampling();
+    		//USB send
+    		sendSample();
+
+    		//set run to 0 if single run mode
+    		if (usb_in[0] == 0) {
+    			run = 0;
+    		}
+    	}
+    }
+
+    Chip_HSADC_DeInit(LPC_ADCHS); //shut down HSADC
+   	Chip_GPDMA_DeInit(LPC_GPDMA); //shut down GPDMA
+
 
     // Force the counter to be placed into memory
     volatile static int i = 0 ;
     // Enter an infinite loop, just incrementing a counter
     while(1) {
-        i++ ;
+    	i++ ;
         // "Dummy" NOP to allow source level single
         // stepping of tight while() loop
         __asm volatile ("nop");
