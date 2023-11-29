@@ -37,6 +37,9 @@ uint8_t sampleBuffer_5[16352];
 __SECTION(bss, RAM2) uint8_t sampleBuffer_6[16352];
 //__SECTION(bss, RAM2) uint8_t sampleBuffer_7[16380];
 
+//variable to store last transfer address
+uint32_t last_transfer;
+
 //********** USB Rom header and variables **********//
 #include <stdio.h>
 #include <string.h>
@@ -289,6 +292,11 @@ static void sendSample()
 {
 	while (libusbdev_QueueSendDone() != 0){};
 	while (libusbdev_SendInterrupt(1) != 0) {};
+
+	while (libusbdev_QueueSendReq((uint8_t*) &last_transfer, 4) != 0){};
+
+	while (libusbdev_QueueSendDone() != 0){};
+
 	while (libusbdev_QueueSendReq(sampleBuffer_0, 16352) != 0){};
 
 	while (libusbdev_QueueSendDone() != 0){};
@@ -411,6 +419,42 @@ void configureDevice(void) {
 	}
 }
 
+void calculateIndexLast(void){
+	if (last_transfer >= (uint32_t)sampleBuffer_0 && last_transfer < ((uint32_t)sampleBuffer_0 + 16352)){
+		last_transfer -= (uint32_t)sampleBuffer_0;
+		return;
+	}
+	if (last_transfer >= (uint32_t)sampleBuffer_1 && last_transfer < ((uint32_t)sampleBuffer_1 + 16352)){
+		last_transfer -= (uint32_t)sampleBuffer_1;
+		last_transfer += 16351;
+		return;
+	}
+	if (last_transfer >= (uint32_t)sampleBuffer_2 && last_transfer < ((uint32_t)sampleBuffer_2 + 16352)){
+		last_transfer -= (uint32_t)sampleBuffer_2;
+		last_transfer += 2*16351;
+		return;
+	}
+	if (last_transfer >= (uint32_t)sampleBuffer_3 && last_transfer < ((uint32_t)sampleBuffer_3 + 16352)){
+		last_transfer -= (uint32_t)sampleBuffer_3;
+		last_transfer += 3*16351;
+		return;
+	}
+	if (last_transfer >= (uint32_t)sampleBuffer_4 && last_transfer < ((uint32_t)sampleBuffer_4 + 16352)){
+		last_transfer -= (uint32_t)sampleBuffer_4;
+		last_transfer += 4*16351;
+		return;
+	}
+	if (last_transfer >= (uint32_t)sampleBuffer_5 && last_transfer < ((uint32_t)sampleBuffer_5 + 16352)){
+		last_transfer -= (uint32_t)sampleBuffer_5;
+		last_transfer += 5*16351;
+		return;
+	}
+	if (last_transfer >= (uint32_t)sampleBuffer_6 && last_transfer < ((uint32_t)sampleBuffer_6 + 16352)){
+		last_transfer -= (uint32_t)sampleBuffer_6;
+		last_transfer += 6*16351;
+		return;
+	}
+}
 
 //********** Main **********//
 int main(void)
@@ -459,8 +503,11 @@ int main(void)
 			// sampling data via ADC
 			//startSampling();
 			//Stop DMA transfer
+			while(LPC_GPDMA->INTTCSTAT == 1);
 		    LPC_GPDMA->CH[DMA_CH].CONFIG = (0x0 << 0); // enable bit, 1 enable, 0 disable
 
+		    last_transfer = LPC_GPDMA->CH[DMA_CH].DESTADDR;
+		    calculateIndexLast();
 			//send data over USB
 			sendSample();
 			LPC_GPDMA->CH[DMA_CH].CONFIG = (0x1 << 0); // enable bit, 1 enable, 0 disable
