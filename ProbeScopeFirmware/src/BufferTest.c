@@ -166,15 +166,14 @@ void setupGPDMA()
 
 	// setting up dataBuffer list destination address
 	DMA_List[0].DstAddr = (uint32_t) sampleBuffer_0;
-	DMA_List[1].DstAddr = (uint32_t) sampleBuffer_0;
-	DMA_List[2].DstAddr = (uint32_t) sampleBuffer_1;
-	DMA_List[3].DstAddr = (uint32_t) sampleBuffer_2;
-	DMA_List[4].DstAddr = (uint32_t) sampleBuffer_3;
-	DMA_List[5].DstAddr = (uint32_t) sampleBuffer_4;
-	DMA_List[6].DstAddr = (uint32_t) sampleBuffer_5;
-	DMA_List[7].DstAddr = (uint32_t) sampleBuffer_6;
+	DMA_List[1].DstAddr = (uint32_t) sampleBuffer_1;
+	DMA_List[2].DstAddr = (uint32_t) sampleBuffer_2;
+	DMA_List[3].DstAddr = (uint32_t) sampleBuffer_3;
+	DMA_List[4].DstAddr = (uint32_t) sampleBuffer_4;
+	DMA_List[5].DstAddr = (uint32_t) sampleBuffer_5;
+	DMA_List[6].DstAddr = (uint32_t) sampleBuffer_6;
 
-	for (int i = 0; i < 8; i++)
+	for (int i = 0; i < 7; i++)
 	{
 		// Set source and destination address
 		DMA_List[i].SrcAddr = (uint32_t) &LPC_ADCHS->FIFO_OUTPUT[0];
@@ -190,8 +189,6 @@ void setupGPDMA()
 							 | (0x1 << 27)  // dst increment: 1, dst address     increment after each trans
 							 | (0x0UL << 31); // terminal count interrupt enable bit: 1, enabled
 	}
-
-	DMA_List[7].NextLLI = (uint32_t) (&DMA_List[1]);
 
 	LPC_GPDMA->CH[DMA_CH].SRCADDR  = DMA_List[0].SrcAddr;
 	LPC_GPDMA->CH[DMA_CH].DESTADDR = DMA_List[0].DstAddr;
@@ -461,6 +458,7 @@ void calculateIndexLast(void){
 		last_transfer /= 2;
 		return;
 	}
+
 	last_transfer = -1;
 }
 
