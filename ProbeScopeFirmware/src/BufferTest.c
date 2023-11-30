@@ -426,32 +426,32 @@ void calculateIndexLast(void){
 	}
 	if (last_transfer >= (uint32_t)sampleBuffer_1 && last_transfer < ((uint32_t)sampleBuffer_1 + 16352)){
 		last_transfer -= (uint32_t)sampleBuffer_1;
-		last_transfer += 16351;
+		last_transfer += 16352;
 		return;
 	}
 	if (last_transfer >= (uint32_t)sampleBuffer_2 && last_transfer < ((uint32_t)sampleBuffer_2 + 16352)){
 		last_transfer -= (uint32_t)sampleBuffer_2;
-		last_transfer += 2*16351;
+		last_transfer += 2*16352;
 		return;
 	}
 	if (last_transfer >= (uint32_t)sampleBuffer_3 && last_transfer < ((uint32_t)sampleBuffer_3 + 16352)){
 		last_transfer -= (uint32_t)sampleBuffer_3;
-		last_transfer += 3*16351;
+		last_transfer += 3*16352;
 		return;
 	}
 	if (last_transfer >= (uint32_t)sampleBuffer_4 && last_transfer < ((uint32_t)sampleBuffer_4 + 16352)){
 		last_transfer -= (uint32_t)sampleBuffer_4;
-		last_transfer += 4*16351;
+		last_transfer += 4*16352;
 		return;
 	}
 	if (last_transfer >= (uint32_t)sampleBuffer_5 && last_transfer < ((uint32_t)sampleBuffer_5 + 16352)){
 		last_transfer -= (uint32_t)sampleBuffer_5;
-		last_transfer += 5*16351;
+		last_transfer += 5*16352;
 		return;
 	}
 	if (last_transfer >= (uint32_t)sampleBuffer_6 && last_transfer < ((uint32_t)sampleBuffer_6 + 16352)){
 		last_transfer -= (uint32_t)sampleBuffer_6;
-		last_transfer += 6*16351;
+		last_transfer += 6*16352;
 		return;
 	}
 }
