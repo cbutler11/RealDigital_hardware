@@ -34,7 +34,7 @@ uint8_t sampleBuffer_3[16352];
 
 uint8_t sampleBuffer_4[16352];
 uint8_t sampleBuffer_5[16352];
-__SECTION(bss, RAM2) uint8_t sampleBuffer_6[16352];
+uint8_t sampleBuffer_6[16352];
 //__SECTION(bss, RAM2) uint8_t sampleBuffer_7[16380];
 
 //variable to store last transfer address
@@ -60,7 +60,7 @@ typedef struct{
 	uint32_t Control; /**< GPDMA Control of this LLI */
 }GPDMA_vector;
 
-static GPDMA_vector DMA_List[8];
+static GPDMA_vector DMA_List[7];
 
 volatile uint32_t numsamples = 0;
 volatile bool unhandledReq = false;
@@ -113,7 +113,7 @@ void setupADC()
 						  (1 << 1);    /* ACT_DESCRIPTOR:   ID of the descriptor that is active */
 
 	// Select both positive and negative DC biasing for input 2
-	Chip_HSADC_SetACDCBias(LPC_ADCHS, 0, HSADC_CHANNEL_DCBIAS, HSADC_CHANNEL_NODCBIAS);
+	Chip_HSADC_SetACDCBias(LPC_ADCHS, 0, HSADC_CHANNEL_DCBIAS, HSADC_CHANNEL_DCBIAS);
 
 	LPC_ADCHS->THR[0] = 0x000 << 0 | 0xFFF << 16;//Default
 	LPC_ADCHS->THR[1] = 0x000 << 0 | 0xFFF << 16;//Default
@@ -125,6 +125,7 @@ void setupADC()
 	    (0 << 5) |       /* CHANNEL_ID_EN:    0=don't add, 1=add channel id to FIFO output data */
 	    (0x90 << 6);     /* RECOVERY_TIME:    ADC recovery time from power down, default is 0x90 */
 
+
 	/* Setup data format for 2's complement and update clock settings. This function
 	   should be called whenever a clock change is made to the HSADC */
 	Chip_HSADC_SetPowerSpeed(LPC_ADCHS, true);
@@ -133,7 +134,7 @@ void setupADC()
 	LPC_ADCHS->DESCRIPTOR[0][0] = (1 << 24) /* RESET_TIMER*/
 								| (0 << 22) /* THRESH*/
 								| (0 << 8) /* MATCH*/
-								| (1 << 6) /* BRANCH to First*/;
+								| (0x01 << 6) /* BRANCH to First*/;
 
 	/* Set descriptor 1 to take a measurement after 0x9A clocks and branch to first descriptor*/
 	LPC_ADCHS->DESCRIPTOR[0][1] = (1 << 31) /* UPDATE TABLE*/
@@ -250,6 +251,12 @@ void samplingADC(void)
 	LPC_ADCHS->TRIGGER = 1; //SW trigger ADC
 }
 
+//********** Setup for external DAC with SPI Bus *********//
+void setupDAC() {
+	//set up pin j2 for SPI output
+	LPC_SCU->SFSP[1][1];
+}
+
 //********** Device basic functions **********//
 static void setupHardware()
 {
@@ -267,6 +274,9 @@ static void setupHardware()
 	Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, 12, true);
 	Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, 13, true);
 	Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, 15, true);
+
+	//initialize DC offset SPI Bus pin J2
+	//setupDAC();
 
 
 	// Initialize USB
@@ -319,6 +329,7 @@ static void sendSample()
 	while (libusbdev_QueueSendDone() != 0){};
 //	libusbdev_SendInterrupt(1);
 	while (libusbdev_QueueSendReq(sampleBuffer_6, 16352) != 0){};
+
 
 //	while (libusbdev_QueueSendDone() != 0){};
 //	while (libusbdev_QueueSendReq(sampleBuffer_7, 16352) != 0){};
@@ -382,12 +393,93 @@ void DMA_IRQHandler(void)
 }
 
 
+void setupTrigger() {
+	LPC_GPDMA->CH[DMA_CH].CONFIG = (0x0 << 0); // enable bit, 1 enable, 0 disable
+	Chip_HSADC_DisablePower(LPC_ADCHS);
+	//Reset all Interrupts
+	NVIC_DisableIRQ(ADCHS_IRQn);
+
+	uint32_t triggerPoint = 0;
+	triggerPoint = (usb_in[2] << 16) | (usb_in[3] & 0xF << 24);
+
+
+	//set thr A by selecting upper bound to user input
+	LPC_ADCHS->THR[0] = 0x000 << 0 | (triggerPoint & 0xFFF) << 16;//Default
+
+	//Set ADCHS Descriptors to use threshold A
+	/*Set descriptor 0 to take a measurement at every clock and branch to itself*/
+	LPC_ADCHS->DESCRIPTOR[0][0] = (1 << 24) /* RESET_TIMER*/
+								| (0x01 << 22) /* THRESH A*/
+								| (0 << 8) /* MATCH*/
+								| (0 << 6) /* BRANCH to next*/;
+
+	/* Set descriptor 1 to take a measurement after 0x9A clocks and branch to first descriptor*/
+	LPC_ADCHS->DESCRIPTOR[0][1] = (1 << 31) /* UPDATE TABLE*/
+								| (1 << 24) /* RESET_TIMER*/
+								| (0x01 << 22) /* THRESH A*/
+								| (0x9A << 8) /* MATCH*/
+								| (0x01 << 6) /* BRANCH to first*/;
+
+	if ((usb_in[3] & 0x2) == 0x2) {
+		//rising
+		LPC_ADCHS->CONFIG =  (0 << 2);       /* TRIGGER_MODE:     0=rising, 1=falling, 2=low, 3=high external trigger */
+	} else {
+		//falling
+		LPC_ADCHS->CONFIG =  (1 << 2);       /* TRIGGER_MODE:     0=rising, 1=falling, 2=low, 3=high external trigger */
+	}
+
+	//Enable HSADC power
+	Chip_HSADC_EnablePower(LPC_ADCHS);
+
+	// Enable interrupts
+	NVIC_EnableIRQ(ADCHS_IRQn);
+
+	LPC_GPDMA->CH[DMA_CH].CONFIG = (0x1 << 0); // enable bit, 1 enable, 0 disable
+}
+
+void undoTrigger(void) {
+	Chip_HSADC_DisablePower(LPC_ADCHS);
+		//Reset all Interrupts
+		NVIC_DisableIRQ(ADCHS_IRQn);
+
+
+
+		//set thr A by selecting upper bound to user input
+		LPC_ADCHS->THR[0] = 0x000 << 0 | 0xFFF << 16;//Default
+
+		/*Set descriptor 0 to take a measurement at every clock and branch to itself*/
+		LPC_ADCHS->DESCRIPTOR[0][0] = (1 << 24) /* RESET_TIMER*/
+									| (0x0 << 22) /* THRESH*/
+									| (0 << 8) /* MATCH*/
+									| (0x01 << 6) /* BRANCH to next*/;
+
+		/* Set descriptor 1 to take a measurement after 0x9A clocks and branch to first descriptor*/
+		LPC_ADCHS->DESCRIPTOR[0][1] = (1 << 31) /* UPDATE TABLE*/
+									| (1 << 24) /* RESET_TIMER*/
+									| (0x0 << 22) /* THRESH*/
+									| (0x9A << 8) /* MATCH*/
+									| (0x01 << 6) /* BRANCH to first*/;
+
+		LPC_ADCHS->CONFIG =  (0 << 2);       /* TRIGGER_MODE:     0=rising, 1=falling, 2=low, 3=high external trigger */
+
+		//Enable HSADC power
+		Chip_HSADC_EnablePower(LPC_ADCHS);
+
+		// Enable interrupts
+		NVIC_EnableIRQ(ADCHS_IRQn);
+}
 
 
 void configureDevice(void) {
 	//usb_in[0] = run mode (single = 0, continuous = 1)
+
 	//usb_in[1] = trigger mode (0 = unconditional, 1 = use trigger)
 	//usb_in[3:2] = trigger configuration settings (bits 11:0 = comparison value, bit 12 = 0 falling, 1 rising)
+	if (usb_in[1] == 1) {
+		setupTrigger();
+	}
+
+
 	//usb_in[4] = attenuation mode (1x = 0, 10x = 1)
 
 	if (usb_in[4] == 1) {
@@ -501,11 +593,36 @@ int main(void)
 
 
 		//request Run Command from USB
-		libusbdev_QueueReadReq(&(usb_in[0]), (uint32_t) 1);
+		libusbdev_QueueReadReq(usb_in, (uint32_t) 3);
 		while (libusbdev_QueueReadDone() == -1) {};
 
-		//If run, stop the sampling and send buffers over usb
-		if (usb_in[0] == 1) {
+		//if trigger mode,
+		if (usb_in[1] == 1) {
+			//usb_in[3] bit 4 = 0 falling, 1 rising
+			if ((usb_in[1] & 0x2) == 0x2) {
+				//rising
+				while ((LPC_ADCHS->INTS->STATUS & 0x3) != 0x3);
+			} else {
+				//falling
+				while ((LPC_ADCHS->INTS->STATUS & 0x2) != 0x2);
+			}
+
+			//wait for half full buffer to fill after trigger
+			for (int i = 0; i < 16000; i++) {
+				while(LPC_GPDMA->INTTCSTAT == 1);
+			}
+			LPC_GPDMA->CH[DMA_CH].CONFIG = (0x0 << 0); // enable bit, 1 enable, 0 disable
+
+			last_transfer = LPC_GPDMA->CH[DMA_CH].DESTADDR;
+			calculateIndexLast();
+			//send data over USB
+			sendSample();
+			undoTrigger();
+			LPC_GPDMA->CH[DMA_CH].CONFIG = (0x1 << 0); // enable bit, 1 enable, 0 disable
+
+		}
+		//Else if unconditional run, stop the sampling and send buffers over usb
+		else if (usb_in[0] == 1) {
 			// sampling data via ADC
 			//startSampling();
 			//Stop DMA transfer
