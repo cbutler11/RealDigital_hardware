@@ -39,6 +39,7 @@ uint8_t sampleBuffer_6[16352];
 
 //variable to store last transfer address
 uint32_t last_transfer;
+uint32_t trigger_index;
 
 //variable to keep track of trigger
 //bit 0 = sampled above
@@ -318,6 +319,10 @@ static void sendSample()
 	while (libusbdev_SendInterrupt(1) != 0) {};
 
 	while (libusbdev_QueueSendReq((uint8_t*) &last_transfer, 4) != 0){};
+
+	while (libusbdev_QueueSendDone() != 0){};
+
+	while (libusbdev_QueueSendReq((uint8_t*) &trigger_index, 4) != 0){};
 
 	while (libusbdev_QueueSendDone() != 0){};
 
@@ -607,7 +612,7 @@ int main(void)
     LPC_GPDMA->CH[DMA_CH].CONFIG = (0x1 << 0); // enable bit, 1 enable, 0 disable
     while(1) {
 
-
+    	trigger_index = 0;
 		//request Run Command from USB
 		libusbdev_QueueReadReq(usb_in, (uint32_t) 6);
 		while (libusbdev_QueueReadDone() == -1) {};
@@ -662,7 +667,8 @@ int main(void)
 				while(LPC_GPDMA->INTTCSTAT == 1);
 			}
 			LPC_GPDMA->CH[DMA_CH].CONFIG = (0x0 << 0); // enable bit, 1 enable, 0 disable
-
+			calculateIndexLast();
+			trigger_index = last_transfer;
 			last_transfer = LPC_GPDMA->CH[DMA_CH].DESTADDR;
 			calculateIndexLast();
 			//send data over USB
