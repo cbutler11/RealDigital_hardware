@@ -47,6 +47,17 @@ uint32_t trigger_index;
 uint32_t trigger;
 uint32_t triggerPoint;
 
+//Counter to stop trigger detection if no trigger found
+uint32_t counter;
+
+//DC offset 1.7 V = 83E
+//SPI fromat: MSB [PD1:PD0, D11:D0, X, X] LSB
+//PD = Power Mode (Normal = 00)
+// 00 100000111110 xx = 0x20F8
+uint8_t DC_OFFSET[2] = {0xF8, 0x20};
+
+static volatile uint32_t SSP1_tx_cnt;
+
 //********** USB Rom header and variables **********//
 #include <stdio.h>
 #include <string.h>
@@ -68,6 +79,7 @@ typedef struct{
 }GPDMA_vector;
 
 static GPDMA_vector DMA_List[7];
+static GPDMA_vector DAC_LLI;
 
 volatile uint32_t numsamples = 0;
 volatile bool unhandledReq = false;
@@ -213,6 +225,35 @@ void setupGPDMA()
 								 | (0x0 << 16)  // lock: when set, this bit enables locked transfer
 								 | (0x1 << 18); // Halt: 1, enable DMA requests; 0, ignore further src DMA req
 
+	DAC_LLI.SrcAddr = (uint32_t) DC_OFFSET;
+	DAC_LLI.DstAddr = 0x40005008; //DATA register for SSP1
+	DAC_LLI.NextLLI = (uint32_t) &DAC_LLI;
+	DAC_LLI.Control = (0 << 0) // transfer size (does not matter when flow control is handled by peripheral)
+					 | (0x0 << 12)  // src burst size of 1
+					 | (0x0 << 15)  // dst burst size of 1
+					 | (0x1 << 18)  // src transfer width 16 bit
+					 | (0x1 << 21)  // dst transfer width 16 bit
+					 | (0x1 << 24)  // src AHB master select (24)
+					 | (0x1 << 25)  // dst AHB master select (25)
+					 | (0x0 << 26)  // src increment: 0, src address not increment after each trans
+					 | (0x0 << 27)  // dst increment: 0, dst address not increment after each trans
+					 | (0x0UL << 31); // terminal count interrupt enable bit: 1, enabled
+	//set up DMA to SSP for DAC DC offset
+//	LPC_GPDMA->CH[1].SRCADDR = DAC_LLI.SrcAddr; //stored data
+//	LPC_GPDMA->CH[1].DESTADDR = DAC_LLI.DstAddr; //DATA register for SSP1
+//	LPC_GPDMA->CH[1].CONTROL = DAC_LLI.Control;
+//
+//	LPC_GPDMA->CH[1].CONFIG = (0x1 << 0)   // enable bit: 1 enable, 0 disable
+//							| (0x0 << 1)   // src peripheral: no setting - memory
+//							| (0xC << 6)   // dst peripheral: set to C   - SSP1 Transmit
+//							| (0x1 << 11)  // flow control: memory to peripheral - DMA control
+//							| (0x1 << 14)  // IE  - interrupt error mask //used to be 0x2
+//							| (0x1 << 15)  // ITC - terminal count interrupt mask
+//							| (0x0 << 16)  // lock: when set, this bit enables locked transfer
+//							| (0x1 << 18); // Halt: 1, enable DMA requests; 0, ignore further src DMA req
+//	LPC_GPDMA->CH[1].LLI = (uint32_t) &DAC_LLI;
+
+
 	//Enable Interrupt for DMA
 	NVIC_SetPriority(DMA_IRQn,0x00);
 	NVIC_ClearPendingIRQ(DMA_IRQn);
@@ -259,11 +300,27 @@ void samplingADC(void)
 	LPC_ADCHS->TRIGGER = 1; //SW trigger ADC
 }
 
-//********** Setup for external DAC with SPI Bus *********//
-void setupDAC() {
-	//set up pin j2 for SPI output
-	LPC_SCU->SFSP[1][1];
-}
+//void setupSSP(void) {
+//	NVIC_DisableIRQ(SSP1_IRQn);
+//
+//	//DC Offset setting for external DAC via SSP1 pin
+//	//Initialize SSP1
+//	Chip_Clock_Enable(CLK_MX_SSP1); //enable SSP1 base clk
+//	Chip_Clock_Enable(CLK_APB2_SSP1); //enable SSP1 peripheral clk
+//
+//	Chip_SSP_Set_Mode(LPC_SSP1, SSP_MODE_MASTER);
+//	Chip_SSP_SetFormat(LPC_SSP1, SSP_BITS_16, SSP_FRAMEFORMAT_SPI, SSP_CLOCK_CPHA1_CPOL0); //16 bit transfers, keep clk low between frames, capture data on falling edge
+//	Chip_SSP_SetBitRate(LPC_SSP1, 10000000); //10 MHz bitrate
+//	Chip_SSP_SetMaster(LPC_SSP1, 1); //set SSP1 as master
+//
+//	Chip_SSP_Enable(LPC_SSP1);
+//
+//	//transfer offset value
+//	NVIC_EnableIRQ(SSP1_IRQn);
+//
+//	Chip_SSP_WriteFrames_Blocking(LPC_SSP1, DC_OFFSET, 2);
+//}
+
 
 //********** Device basic functions **********//
 static void setupHardware()
@@ -283,28 +340,17 @@ static void setupHardware()
 	Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, 13, true);
 	Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, 15, true);
 
-	//initialize DC offset SPI Bus pin J2
-	//setupDAC();
-
-
 	// Initialize USB
 	setupUSB();
 
 	// Initialize ADC
 	setupADC();
 
+//	//initialize SSP1 for DAC Control
+//	setupSSP();
+
 	//Initialize GPDMA
 	setupGPDMA();
-
-//	//DC Offset setting for external DAC via SSP1 pin
-//	Chip_SSP_Init(LPC_SSP1); //initialize SSP
-//	Chip_SSP_SetMaster(LPC_SSP1, 1); //set SSP1 as master
-//	LPC_SSP1->CR1 = (0x0 << 4)
-//					| (0x0 << 6)
-//					| (0x0 << 7)
-//					| (0xC8 << 8);
-//	Chip_SSP_Enable(LPC_SSP1);
-//	Chip_SSP_SendFrame(LPC_SSP1, 0xFFF); //send DC Offset amount to DAC
 
 	samplingADC();
 
@@ -414,6 +460,18 @@ void DMA_IRQHandler(void)
 	//stop hsadc
 	LPC_GPDMA-> CH [DMA_CH].CONFIG&=~(0x1 << 0);
 }
+
+//********************** SSP IRQ Handler ************************************//
+//void SSP_IRQHANDLER(void)
+//{
+//	Chip_SSP_Int_Disable(LPC_SSP1);	/* Disable all interrupt */
+//	SSP1_tx_cnt = Chip_SSP_WriteFrames_Blocking(LPC_SSP1, &DC_OFFSET, 2);
+//
+//
+//	if (SSP1_tx_cnt != 2) {
+//		Chip_SSP_Int_Enable(LPC_SSP1);	/* enable all interrupts */
+//	}
+//}
 
 
 void setupTrigger() {
@@ -566,14 +624,14 @@ void calculateIndexLast(void){
 		last_transfer /= 2;
 		return;
 	}
-//	if (last_transfer >= (uint32_t)sampleBuffer_6 && last_transfer < ((uint32_t)sampleBuffer_6 + 16352)){
-//		last_transfer -= (uint32_t)sampleBuffer_6;
-//		last_transfer += 6*16352;
-//		last_transfer /= 2;
-//		return;
-//	}
+	if (last_transfer >= (uint32_t)sampleBuffer_6 && last_transfer < ((uint32_t)sampleBuffer_6 + 16352)){
+		last_transfer -= (uint32_t)sampleBuffer_6;
+		last_transfer += 6*16352;
+		last_transfer /= 2;
+		return;
+	}
 
-	last_transfer = -1;
+//	last_transfer = -1;
 }
 
 //********** Main **********//
@@ -607,9 +665,13 @@ int main(void)
     // TODO: insert code here
     setupHardware();
     Chip_GPDMA_ChannelCmd(LPC_GPDMA, DMA_CH, ENABLE);
+    //Chip_GPDMA_ChannelCmd(LPC_GPDMA, 1, ENABLE);
     //start DMA
-    LPC_GPDMA->SYNC = 1;
+    LPC_GPDMA->SYNC = 0x01;
     LPC_GPDMA->CH[DMA_CH].CONFIG = (0x1 << 0); // enable bit, 1 enable, 0 disable
+    //LPC_GPDMA->CH[1].CONFIG = (0x1 << 0);
+//    //start SSP transfer
+//    LPC_SSP1->DMACR = 0x2;
     while(1) {
 
     	trigger_index = 0;
@@ -618,16 +680,17 @@ int main(void)
 		while (libusbdev_QueueReadDone() == -1) {};
 
 		configureDevice();
-		for (int i = 0; i < 10000; i++) {
+		for (int i = 0; i < 15000; i++) {
 			while(LPC_GPDMA->INTTCSTAT == 1);
 		}
 
 		if (usb_in[1] == 1) {
 			trigger = 0;
+			counter = 0;
 			//usb_in[3] bit 4 = 0 falling, 1 rising
 			if ((usb_in[1] & 0x2) == 0x2) {
 				//rising
-				while (trigger != 0x2) {
+				while (trigger != 0x2 && counter < 3000000) {
 					//get dest addr of next dma transfer
 					last_transfer = LPC_GPDMA->CH[DMA_CH].DESTADDR;
 					//wait for transfer to complete
@@ -641,11 +704,12 @@ int main(void)
 					else if (trigger == 0x1) {
 							trigger = (0x1 << 1);
 					}
+					counter++;
 				}
 
 			} else {
 				//falling
-				while (trigger != 0x2) {
+				while (trigger != 0x2 && counter < 3000000) {
 					//get dest addr of dma transfer
 					last_transfer = LPC_GPDMA->CH[DMA_CH].DESTADDR;
 					//wait for transfer to complete
@@ -659,18 +723,26 @@ int main(void)
 					else if (trigger == 0x1) {
 							trigger = (0x1 << 1);
 					}
+					counter++;
 				}
 			}
 
 			//wait for half full buffer to fill after trigger
-			for (int i = 0; i < 1600; i++) {
+			for (int i = 0; i < 5000; i++) {
 				while(LPC_GPDMA->INTTCSTAT == 1);
 			}
 			LPC_GPDMA->CH[DMA_CH].CONFIG = (0x0 << 0); // enable bit, 1 enable, 0 disable
-			calculateIndexLast();
-			trigger_index = last_transfer;
+			if (counter < 3000000) {
+				calculateIndexLast();
+				trigger_index = last_transfer;
+			}
+
 			last_transfer = LPC_GPDMA->CH[DMA_CH].DESTADDR;
 			calculateIndexLast();
+
+			if (counter >= 3000000) {
+				trigger_index = last_transfer;
+			}
 			//send data over USB
 			sendSample();
 			undoTrigger();
